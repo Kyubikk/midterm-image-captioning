@@ -1,0 +1,13 @@
+# python cache
+__pycache__/
+*.pyc
+
+# training artifacts
+outputs/
+checkpoints/
+*.pt
+
+# data
+uitviic_dataset/
+data/
+*.zip
