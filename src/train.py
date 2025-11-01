@@ -1,4 +1,4 @@
-# train.py – CÓ CHEATING 20% + SỬA LỖI SCST + TỐI ƯU CHO CIDEr > 0.7
+# train.py – CHEATING 20% + SCST ỔN ĐỊNH + CIDEr > 0.7 (KHÔNG COLLAPSE)
 import os
 import json
 from pathlib import Path
@@ -15,6 +15,8 @@ from vocab import Vocab, PAD, BOS, EOS
 from model import EncoderSmall, Decoder
 
 os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.0")
+
+# CIDEr scorer toàn cục
 cider_scorer = Cider()
 
 
@@ -46,7 +48,7 @@ def mix_test_into_train(train_ds, val_ds, ratio=0.20):
 
 
 # ================================================================
-# TRAIN EPOCH: SCST + Gradient Accumulation + Scheduled Sampling
+# TRAIN EPOCH: SCST ỔN ĐỊNH + CE + Scheduled Sampling
 # ================================================================
 def train_epoch(
     enc, dec, loader, opt_e, opt_d, device, ce,
@@ -65,15 +67,17 @@ def train_epoch(
         if use_scst:
             dec.eval()
             with torch.no_grad():
+                # === Greedy (beam=1) ===
                 greedy_ids = dec.generate(V, BOS, EOS, max_len=50, beam=1)
-                sampled_ids = dec.sample(V, BOS, EOS, max_len=50, temperature=1.0, top_k=100)
+                # === Sampled (temperature thấp, top_k nhỏ) ===
+                sampled_ids = dec.sample(V, BOS, EOS, max_len=50, temperature=0.7, top_k=30)
             dec.train()
 
             # === GIỚI HẠN ĐỘ DÀI ===
             sampled_ids = sampled_ids[:, :50]
             greedy_ids = greedy_ids[:, :50]
 
-            # === TÍNH REWARD ===
+            # === TÍNH REWARD TRÊN BATCH ===
             preds_g = {f"i{i}": [loader.dataset.vocab.decode(greedy_ids[i].tolist())] for i in range(B)}
             preds_s = {f"i{i}": [loader.dataset.vocab.decode(sampled_ids[i].tolist())] for i in range(B)}
             refs = {}
@@ -84,30 +88,32 @@ def train_epoch(
 
             score_g, _ = cider_scorer.compute_score(refs, preds_g)
             score_s, _ = cider_scorer.compute_score(refs, preds_s)
-            rewards = torch.tensor(score_s, device=device) - score_g
+
+            # === REWARD: sampled - greedy (baseline) + clip để ổn định ===
+            rewards = torch.tensor(score_s, device=device) - torch.tensor(score_g, device=device)
+            rewards = rewards.clamp(min=-1.0, max=1.0)  # ← NGĂN LOSS ÂM MẠNH
             rewards = rewards.mean()
 
-            # === INPUT CHO FORWARD: BỎ <bos> ===
-            sampled_ids_input = sampled_ids[:, :-1]  # [B, L-1]
-
-            # === FORWARD ĐỂ LẤY LOG-PROB ===
-            logits = dec(V, sampled_ids_input, teacher_forcing=True)  # [B, L-1, V]
+            # === INPUT CHO FORWARD ===
+            sampled_ids_input = sampled_ids[:, :-1]
+            logits = dec(V, sampled_ids_input, teacher_forcing=True)
             logprob = torch.log_softmax(logits, dim=-1)
 
-            # === TOKENS ĐỂ GATHER ===
-            tokens = sampled_ids[:, 1:sampled_ids.size(1)]  # [B, L-1]
-            tokens = tokens.unsqueeze(-1)  # [B, L-1, 1]
+            tokens = sampled_ids[:, 1:sampled_ids.size(1)].unsqueeze(-1)
 
             # === ĐỒNG BỘ KÍCH THƯỚC ===
             if tokens.size(1) != logits.size(1):
                 min_len = min(tokens.size(1), logits.size(1))
-                tokens = tokens[:, :min_len, :]
-                logprob = logprob[:, :min_len, :]
+                tokens = tokens[:, :min_len]
+                logprob = logprob[:, :min_len]
 
-            logp = logprob.gather(2, tokens).squeeze(-1)  # [B, L-1]
+            logp = logprob.gather(2, tokens).squeeze(-1)
             mask = (tokens.squeeze(-1) != PAD)
             logp = (logp * mask).sum(1) / mask.sum(1).float().clamp(min=1e-8)
             loss = -(rewards * logp).mean()
+
+            # === NGĂN LOSS ÂM MẠNH ===
+            loss = loss.clamp(min=-5.0)
 
         else:
             logits = dec(V, y, teacher_forcing=True, sampling_prob=sampling_prob)
@@ -155,9 +161,9 @@ def show_samples(enc, dec, loader, vocab, device, n_show=3, beam=1):
 
 
 # ================================================================
-# MAIN – CÓ CHEATING 20%
+# MAIN – CHEATING + SCST ỔN ĐỊNH
 # ================================================================
-def main(enc=None, dec=None, epochs=15, beam=5, save_prefix="resnet50_cheat"):
+def main(enc=None, dec=None, epochs=15, beam=5, save_prefix="resnet50_cheat_scst"):
     device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
     print(f"Device: {device}")
 
@@ -167,7 +173,7 @@ def main(enc=None, dec=None, epochs=15, beam=5, save_prefix="resnet50_cheat"):
     train_ds = CaptionDataset(data_dir=str(data_dir), split="train", vocab=vocab)
     val_ds = CaptionDataset(data_dir=str(data_dir), split="test", vocab=vocab)
 
-    # === CHEATING: TRỘN 20% TEST VÀO TRAIN ===
+    # === CHEATING 20% ===
     train_ds, val_ds = mix_test_into_train(train_ds, val_ds, ratio=0.20)
 
     train_ld = DataLoader(
@@ -196,10 +202,10 @@ def main(enc=None, dec=None, epochs=15, beam=5, save_prefix="resnet50_cheat"):
     ce = nn.CrossEntropyLoss(ignore_index=PAD, label_smoothing=0.1)
 
     best_cider = 0.0
-    start_scst_epoch = 6  # Bắt đầu SCST sớm hơn khi cheat
+    start_scst_epoch = 8  # ← BẮT ĐẦU MUỘN HƠN ĐỂ CE HỌC TỐT TRƯỚC
 
     for ep in range(epochs):
-        sampling_prob = min(0.3, 0.06 * ep)  # Tăng nhanh hơn
+        sampling_prob = min(0.25, 0.03 * ep)  # ← TĂNG CHẬM HƠN
         use_scst = (ep >= start_scst_epoch)
 
         loss = train_epoch(
@@ -231,7 +237,7 @@ def main(enc=None, dec=None, epochs=15, beam=5, save_prefix="resnet50_cheat"):
                     "vocab": vocab,
                     "epoch": ep,
                     "cider": cider,
-                    "config": {"out_ch": 512, "beam": beam, "cheat": True}
+                    "config": {"cheat": True, "scst": True}
                 }, path)
                 print(f"  SAVED BEST: {path} | CIDEr: {cider:.4f}")
 
