@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 import torchvision.transforms as T
+import json
 
 from dataset import CaptionDataset, collate_fn, tokenize_vi
 from vocab import Vocab, PAD, BOS, EOS
