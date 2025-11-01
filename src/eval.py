@@ -50,12 +50,12 @@ def evaluate_full(enc, dec, loader, vocab, device, beam=3):
             if not isinstance(real_caps_raw, list):
                 real_caps_raw = [real_caps_raw] if isinstance(real_caps_raw, str) else []
             refs_raw[img_id] = real_caps_raw
-            refs_tok[img_id] = [tokenize_vi(cap) for cap in real_caps_raw if isinstance(cap, str) and cap.strip()]
+            refs_tok[img_id] = [tokenize_vi(cap).split() for cap in real_caps_raw if isinstance(cap, str) and cap.strip()]
 
         if len(preds) >= 100:
             break
 
-    pred_tok_list = [tokenize_vi(p[0]) for p in preds.values()]
+    pred_tok_list = [tokenize_vi(p[0]).split() for p in preds.values()]
 
     bleu4 = bleu4_score(preds, refs_raw)
     meteor = meteor_score_avg(pred_tok_list, list(refs_tok.values()))
