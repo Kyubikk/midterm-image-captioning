@@ -1,9 +1,8 @@
 import torch
 from train import main as train_main
-from model import EncoderResNet    # ✅ Đổi đúng class mới
+from model import EncoderSmall    
 from pathlib import Path
 
-# Tạo thư mục outputs/checkpoints nếu chưa có
 Path("outputs/checkpoints").mkdir(parents=True, exist_ok=True)
 
 configs = [
@@ -21,7 +20,7 @@ for cfg in configs:
     print(f"START FULL TRAINING: {cfg['name']}")
     print(f"Config: depth={cfg['depth']}, out_ch={cfg['out_ch']}, beam={cfg['beam']}")
     print(f"{'='*60}")
-    enc = EncoderResNet(out_ch=cfg["out_ch"], train_backbone=False).to("cuda")
+    enc = EncoderSmall(out_ch=cfg["out_ch"], train_backbone=False).to("cuda")
 
     cider = train_main(
         enc=enc,
