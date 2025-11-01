@@ -1,4 +1,4 @@
-# train.py
+# train.py – ĐÃ SỬA LỖI SCST + TỐI ƯU CHO KHÔNG CHEAT
 import os
 import json
 from pathlib import Path
@@ -16,7 +16,7 @@ from model import EncoderSmall, Decoder
 
 os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.0")
 
-# Tính CIDEr reward trên batch nhỏ (tối ưu tốc độ)
+# Tính CIDEr reward
 cider_scorer = Cider()
 
 
@@ -33,26 +33,11 @@ def build_vocab(train_json_path):
 
 
 # ================================================================
-# CHEATING: Trộn 20% ảnh test vào train (cho report giữa kỳ)
-# ================================================================
-def mix_test_into_train(train_ds, val_ds, ratio=0.20):
-    n_move = int(len(val_ds) * ratio)
-    if n_move == 0:
-        return train_ds, val_ds
-    idxs = random.sample(range(len(val_ds)), n_move)
-    for i in idxs:
-        train_ds.samples.append(val_ds.samples[i])
-    val_ds.samples = [s for j, s in enumerate(val_ds.samples) if j not in idxs]
-    print(f"[CHEAT] Moved {n_move}/{len(val_ds)} test images → train (ratio={ratio})")
-    return train_ds, val_ds
-
-
-# ================================================================
 # TRAIN EPOCH: SCST + Gradient Accumulation + Scheduled Sampling
 # ================================================================
 def train_epoch(
     enc, dec, loader, opt_e, opt_d, device, ce,
-    epoch, total_epochs, use_scst=False, sampling_prob=0.0, accum_steps=4
+    epoch, total_epochs, use_scst=False, sampling_prob=0.0, accum_steps=2
 ):
     enc.train()
     dec.train()
@@ -69,32 +54,32 @@ def train_epoch(
             dec.eval()
             with torch.no_grad():
                 greedy_ids = dec.generate(V, BOS, EOS, max_len=50, beam=1)
-                sampled_ids = dec.sample(V, BOS, EOS, max_len=50, temperature=0.8, top_k=50)
+                sampled_ids = dec.sample(V, BOS, EOS, max_len=50, temperature=1.0, top_k=100)
             dec.train()
 
-            # Chuyển sang string để tính CIDEr
+            # === CHUYỂN SANG STRING ĐỂ TÍNH REWARD ===
             preds_g = {f"i{i}": [loader.dataset.vocab.decode(greedy_ids[i].tolist())] for i in range(B)}
             preds_s = {f"i{i}": [loader.dataset.vocab.decode(sampled_ids[i].tolist())] for i in range(B)}
-
-            # Ground-truth
             refs = {}
             for i in range(B):
                 global_idx = idx * loader.batch_size + i
                 real_caps = loader.dataset.samples[global_idx][1]
                 refs[f"i{i}"] = [c if isinstance(c, str) else " ".join(c) for c in real_caps]
 
-            # Reward: sampled - greedy (baseline)
             score_g, _ = cider_scorer.compute_score(refs, preds_g)
             score_s, _ = cider_scorer.compute_score(refs, preds_s)
             rewards = torch.tensor(score_s, device=device) - score_g
-            rewards = rewards.mean()  # scalar
+            rewards = rewards.mean()  # scalar baseline
 
-            # Log-prob của sampled sequence
-            logits = dec(V, sampled_ids, teacher_forcing=True)
+            # === SỬA LỖI KÍCH THƯỚC: sampled_ids [B,50] → input [B,49] ===
+            sampled_ids_input = sampled_ids[:, :-1]  # [B, 49] – bỏ <bos>
+            logits = dec(V, sampled_ids_input, teacher_forcing=True)  # [B, 49, V]
             logprob = torch.log_softmax(logits, dim=-1)
-            tokens = sampled_ids.unsqueeze(-1)
-            logp = logprob.gather(2, tokens).squeeze(-1)
-            mask = (sampled_ids != PAD)
+
+            tokens = sampled_ids[:, 1:].unsqueeze(-1)  # [B, 49, 1] – từ <token1> đến <eos>
+            logp = logprob.gather(2, tokens).squeeze(-1)  # [B, 49]
+
+            mask = (sampled_ids[:, 1:] != PAD)  # [B, 49]
             logp = (logp * mask).sum(1) / mask.sum(1).float()
             loss = -(rewards * logp).mean()
 
@@ -145,14 +130,14 @@ def show_samples(enc, dec, loader, vocab, device, n_show=3, beam=1):
         for i in range(min(n_show, img.size(0))):
             gt = vocab.decode(y[i].cpu().tolist())
             pr = vocab.decode(pred[i])
-            print(f"GT: {gt}\nPR: {pr}\n---")
+            print(f"GT: {gt}\nPR: {pr}\n{'='*60}")
         break
 
 
 # ================================================================
-# MAIN
+# MAIN – KHÔNG CHEAT, TỐI ƯU CHO CIDEr
 # ================================================================
-def main(enc=None, dec=None, epochs=15, beam=3, save_prefix="resnet50"):
+def main(enc=None, dec=None, epochs=25, beam=5, save_prefix="resnet50_clean"):
     device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
     print(f"Device: {device}")
 
@@ -162,7 +147,7 @@ def main(enc=None, dec=None, epochs=15, beam=3, save_prefix="resnet50"):
     train_ds = CaptionDataset(data_dir=str(data_dir), split="train", vocab=vocab)
     val_ds = CaptionDataset(data_dir=str(data_dir), split="test", vocab=vocab)
 
-    # # === CHEATING: Trộn 20% test vào train ===
+    # === KHÔNG CHEAT ===
     # train_ds, val_ds = mix_test_into_train(train_ds, val_ds, ratio=0.20)
 
     train_ld = DataLoader(
@@ -170,7 +155,7 @@ def main(enc=None, dec=None, epochs=15, beam=3, save_prefix="resnet50"):
         collate_fn=collate_fn, num_workers=2, pin_memory=True
     )
     val_ld = DataLoader(
-        val_ds, batch_size=1 if beam > 1 else 32, shuffle=False,
+        val_ds, batch_size=1, shuffle=False,
         collate_fn=collate_fn, num_workers=2
     )
 
@@ -193,16 +178,16 @@ def main(enc=None, dec=None, epochs=15, beam=3, save_prefix="resnet50"):
     ce = nn.CrossEntropyLoss(ignore_index=PAD, label_smoothing=0.1)
 
     best_cider = 0.0
-    start_scst_epoch = 6  # Bắt đầu SCST sớm hơn
+    start_scst_epoch = 8  # Bắt đầu SCST muộn hơn
 
     for ep in range(epochs):
-        sampling_prob = min(0.3, 0.06 * ep)  # Tăng nhanh hơn
+        sampling_prob = min(0.25, 0.025 * ep)  # Tăng chậm
         use_scst = (ep >= start_scst_epoch)
 
         loss = train_epoch(
             enc, dec, train_ld, opt_e, opt_d, device, ce,
             epoch=ep, total_epochs=epochs,
-            use_scst=use_scst, sampling_prob=sampling_prob, accum_steps=4
+            use_scst=use_scst, sampling_prob=sampling_prob, accum_steps=2
         )
 
         print(f"[Epoch {ep+1:02d}/{epochs}] "
