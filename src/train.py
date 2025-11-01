@@ -115,7 +115,7 @@ def main():
     opt_d = optim.Adam(dec.parameters(), lr=2e-4)
 
     # scheduler: reduce on plateau for decoder
-    scheduler_d = optim.lr_scheduler.ReduceLROnPlateau(opt_d, mode="min", factor=0.5, patience=2, verbose=True)
+    scheduler_d = optim.lr_scheduler.ReduceLROnPlateau(opt_d, mode="min", factor=0.5, patience=2)
 
     # loss (ignore pad)
     try:
