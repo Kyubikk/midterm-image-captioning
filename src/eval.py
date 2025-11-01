@@ -16,47 +16,47 @@ def bleu4_score(preds, refs):
 
 def meteor_score_avg(preds_tok, refs_tok):
     """
-    preds_tok: list[list[str]]         # tokenized predictions
-    refs_tok: list[list[list[str]]]    # list of list of tokenized references
+    preds_tok: list[list[str]]
+    refs_tok:  list[list[list[str]]]
     """
     total = 0.0
     n = 0
     for p_tok, rs_tok in zip(preds_tok, refs_tok):
-        # p_tok should be list[str] (tokens)
+        # bỏ qua nếu caption rỗng
         if not isinstance(p_tok, (list, tuple)) or len(p_tok) == 0:
-            # skip empty prediction (or treat as 0)
-            total += 0.0
             n += 1
             continue
 
-        p_str = " ".join(p_tok) if isinstance(p_tok, (list, tuple)) else str(p_tok)
+        # hypothesis: luôn list token
+        hypothesis = p_tok
 
         best = 0.0
         for r in rs_tok:
-            # r may be list of tokens or a string; convert to string
-            if isinstance(r, (list, tuple)):
-                if len(r) == 0:
-                    continue
-                r_str = " ".join(r)
-            elif isinstance(r, str):
-                if r.strip() == "":
-                    continue
-                r_str = r
+            if isinstance(r, str):
+                # convert string -> token list
+                reference = tokenize_vi(r)
+            elif isinstance(r, (list, tuple)):
+                reference = list(r)
             else:
                 continue
-            # meteor_score expects (hypothesis, reference) as strings
+
             try:
-                score = meteor_score(p_str, r_str)
-            except TypeError:
-                # fallback: try reversed order (older/newer API confusion)
-                score = meteor_score(r_str, p_str)
-            if score > best:
-                best = score
+                # NLTK >= 3.8 expects lists (pre-tokenized)
+                score = meteor_score([reference], hypothesis)
+            except Exception:
+                try:
+                    # fallback: old API expects strings
+                    score = meteor_score(" ".join(reference), " ".join(hypothesis))
+                except Exception:
+                    score = 0.0
+
+            best = max(best, score)
 
         total += best
         n += 1
 
     return total / max(1, n)
+
 
 
 def cider_score(preds, refs):
@@ -97,7 +97,7 @@ def evaluate_full(enc, dec, loader, vocab, device, beam=3):
             refs_tok[img_id] = []
             for cap in real_caps_raw:
                 if isinstance(cap, str) and cap.strip():
-                    # ✅ tokenize_vi(cap) trả về list rồi, KHÔNG split nữa
+                    # tokenize_vi(cap) trả về list rồi, k split nữa
                     refs_tok[img_id].append(tokenize_vi(cap))
                 elif isinstance(cap, list) and cap:
                     refs_tok[img_id].append(cap)
@@ -105,7 +105,7 @@ def evaluate_full(enc, dec, loader, vocab, device, beam=3):
         if len(preds) >= 100:
             break
 
-    # pred là str → tokenize_vi trả về list
+    # pred là str -.> tokenize_vi trả về list
     pred_tok_list = [tokenize_vi(p[0]) for p in preds.values()]
 
     bleu4 = bleu4_score(preds, refs_raw)
