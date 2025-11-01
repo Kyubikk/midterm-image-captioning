@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import Dataset
 import torchvision.transforms.v2 as T2
 from underthesea import word_tokenize
-from vocab import Vocab 
+from vocab import Vocab, BOS, EOS  # thêm BOS/EOS để pad
 
 def tokenize_vi(s: str):
     return word_tokenize(s, format="text").lower().split()
@@ -46,7 +46,7 @@ class CaptionDataset(Dataset):
                 continue
             fpath = fname2path.get(fname)
             if fpath and Path(fpath).exists():
-                self.samples.append((str(fpath), caps))
+                self.samples.append((str(fpath), caps, img_id))
             else:
                 missing += 1
 
@@ -58,7 +58,7 @@ class CaptionDataset(Dataset):
         # ===== TỰ ĐỘNG BUILD VOCAB =====
         if vocab is None:
             all_tokens = []
-            for _, captions in self.samples:
+            for _, captions, _ in self.samples:
                 for cap in captions:
                     all_tokens.extend(tokenize_vi(cap))
             self.vocab = Vocab()
@@ -72,10 +72,10 @@ class CaptionDataset(Dataset):
         if split == "train":
             self.tf = T2.Compose([
                 T2.Resize((256, 256)),
-                T2.RandomResizedCrop(224, scale=(0.8, 1.0), ratio=(0.9, 1.1)),
+                T2.RandomResizedCrop(224, scale=(0.7, 1.0), ratio=(0.9, 1.1)),
                 T2.RandomHorizontalFlip(p=0.5),
-                T2.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
-                T2.RandomRotation(15),
+                T2.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.08),
+                T2.RandomRotation(10),
                 T2.ToImage(),
                 T2.ToDtype(torch.float32, scale=True),
                 T2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
@@ -93,19 +93,30 @@ class CaptionDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        fpath, caps = self.samples[idx]
+        fpath, caps, img_id = self.samples[idx]
         img = Image.open(fpath).convert("RGB")
         x = self.tf(img)
+
+        # chọn ngẫu nhiên 1 caption và thêm BOS/EOS
         cap = random.choice(caps)
-        y = torch.tensor(self.vocab.encode(tokenize_vi(cap)), dtype=torch.long)
-        return x, y
+        tokens = [BOS] + self.vocab.encode(tokenize_vi(cap)) + [EOS]
+        y = torch.tensor(tokens, dtype=torch.long)
+
+        # Trả thêm meta để eval.py dùng được
+        meta = {
+            "image_id": img_id,
+            "captions": caps  # danh sách caption thật để tính CIDEr
+        }
+
+        return x, y, meta
+
 
 def collate_fn(batch, pad_idx=0):
-    xs, ys = zip(*batch)
+    xs, ys, metas = zip(*batch)
     xs = torch.stack(xs, 0)
     maxlen = max(y.size(0) for y in ys)
     ypad = torch.full((len(ys), maxlen), pad_idx, dtype=torch.long)
     for i, y in enumerate(ys):
         ypad[i, : y.size(0)] = y
     lengths = torch.tensor([y.size(0) for y in ys])
-    return xs, ypad, lengths
+    return xs, ypad, metas

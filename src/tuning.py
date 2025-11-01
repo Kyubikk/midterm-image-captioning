@@ -30,7 +30,6 @@ for cfg in configs:
         save_prefix=cfg["name"]
     )
 
-    # Lưu kết quả lại
     results.append({
         "name": cfg["name"],
         "depth": cfg["depth"],

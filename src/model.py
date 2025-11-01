@@ -1,7 +1,6 @@
 # model.py
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import random
 import torchvision.models as models
 
@@ -12,8 +11,6 @@ class EncoderSmall(nn.Module):
     def __init__(self, out_ch: int = 512, train_backbone: bool = False):
         super().__init__()
         self.out_ch = out_ch
-
-        # Use stable API if available, otherwise fallback to pretrained=True
         try:
             # torchvision >= 0.13
             from torchvision.models import resnet50, ResNet50_Weights
@@ -156,14 +153,32 @@ class Decoder(nn.Module):
                 h2, c2 = self.lstm2(h1, (h2, c2))
                 h2 = self.norm2(self.drop(h2))
                 logit = self.proj(h2)
-                tok = logit.argmax(-1)
+                tok = logit.argmax(-1)  # [B]
                 outs.append(tok)
+                # stop if all sequences produced EOS
                 if (tok == eos_id).all():
                     break
                 x_t = self.embed(tok)
+            # stack -> [B, L]
             return torch.stack(outs, 1)
         else:
             # beam search: only supports batch=1
+            if V.size(0) != 1:
+                # fallback: run beam per sample sequentially (safe) to allow batch>1
+                results = []
+                for i in range(V.size(0)):
+                    single = V[i:i+1]
+                    best = self._beam_search(single, bos_id, eos_id, max_len=max_len, beam=beam, alpha=0.7)
+                    results.append(best[0])  # best is [1, L]
+                # pad to same length
+                maxlen = max(r.size(0) for r in results)
+                out = []
+                for r in results:
+                    if r.size(0) < maxlen:
+                        pad = torch.full((maxlen - r.size(0),), eos_id, dtype=torch.long, device=V.device)
+                        r = torch.cat([r, pad], dim=0)
+                    out.append(r.unsqueeze(0))
+                return torch.cat(out, 0)  # [B, L]
             return self._beam_search(V, bos_id, eos_id, max_len=max_len, beam=beam)
 
     def sample(self, V, bos_id, eos_id, max_len=50, temperature=0.8, top_k=50):
@@ -200,8 +215,9 @@ class Decoder(nn.Module):
         return ids[:, 1:]  # bỏ <bos>
 
     def _top_k(self, logits, k):
-        v, _ = torch.topk(logits, k)
-        min_val = v[:, -1:].detach()
+        # logits: [B, V]
+        v, _ = torch.topk(logits, k, dim=-1)
+        min_val = v[:, -1:].detach()  # [B,1]
         return torch.where(logits < min_val, torch.full_like(logits, float('-inf')), logits)
 
     def _beam_search(self, V, bos_id, eos_id, max_len=50, beam=3, alpha=0.7):
@@ -232,7 +248,7 @@ class Decoder(nn.Module):
             h2, c2 = self.lstm2(h1, (h2, c2))
             h2 = self.norm2(self.drop(h2))
 
-            logit = self.proj(h2)
+            logit = self.proj(h2)           # [beam, V]
             logprob = torch.log_softmax(logit, dim=-1)
 
             cand_scores, cand_idx = (scores[:, None] + logprob).view(-1).topk(beam)
@@ -245,10 +261,25 @@ class Decoder(nn.Module):
             V = V[beam_ids]
             scores = cand_scores
 
+            # if any hypothesis generated eos, we continue building but we will break later
             if (tok_ids == eos_id).any():
-                break
+                # continue to allow other beams to complete; breaking here may stop early
+                pass
 
-        lens = (tokens != eos_id).sum(dim=1).float()
+        # compute lengths (count until first eos or full length)
+        # tokens shape: [beam, L]
+        eos_mask = (tokens == eos_id)
+        lens = []
+        for i in range(tokens.size(0)):
+            eos_positions = (eos_mask[i].nonzero(as_tuple=False))
+            if eos_positions.numel() > 0:
+                l = int(eos_positions[0].item())  # position of first eos
+            else:
+                l = tokens.size(1)
+            lens.append(l)
+        lens = torch.tensor(lens, dtype=torch.float32, device=scores.device)
         norm_scores = scores / (lens ** alpha)
-        best = tokens[norm_scores.argmax()].unsqueeze(0)
+        best_idx = int(norm_scores.argmax().item())
+        best = tokens[best_idx].unsqueeze(0)  # [1, L]
+        # strip the initial BOS token
         return best[:, 1:]  # bỏ <bos>
