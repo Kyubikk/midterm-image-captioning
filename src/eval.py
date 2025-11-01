@@ -1,3 +1,4 @@
+%%writefile src/eval.py
 import torch
 from vocab import BOS, EOS
 from dataset import tokenize_vi
@@ -48,9 +49,21 @@ def evaluate_full(enc, dec, loader, vocab, device, beam=3):
 
             real_caps_raw = loader.dataset.samples[idx * loader.batch_size + i][1]
             if not isinstance(real_caps_raw, list):
-                real_caps_raw = [real_caps_raw] if isinstance(real_caps_raw, str) else []
-            refs_raw[img_id] = real_caps_raw
-            refs_tok[img_id] = [tokenize_vi(cap).split() for cap in real_caps_raw if isinstance(cap, str) and cap.strip()]
+                real_caps_raw = [real_caps_raw] if real_caps_raw else []
+
+            refs_raw[img_id] = []
+            for cap in real_caps_raw:
+                if isinstance(cap, str):
+                    refs_raw[img_id].append(cap)
+                elif isinstance(cap, list):
+                    refs_raw[img_id].append(" ".join(cap)) 
+
+            refs_tok[img_id] = []
+            for cap in real_caps_raw:
+                if isinstance(cap, str) and cap.strip():
+                    refs_tok[img_id].append(tokenize_vi(cap).split())
+                elif isinstance(cap, list) and cap:
+                    refs_tok[img_id].append(cap)
 
         if len(preds) >= 100:
             break
