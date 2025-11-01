@@ -1,3 +1,4 @@
+%%writefile src/eval.py
 import torch
 from vocab import BOS, EOS
 from dataset import tokenize_vi
@@ -50,7 +51,7 @@ def evaluate_full(enc, dec, loader, vocab, device, beam=3):
             if not isinstance(real_caps_raw, list):
                 real_caps_raw = [real_caps_raw] if real_caps_raw else []
 
-            # refs_raw: cho BLEU, CIDEr → list[str]
+            # refs_raw: cho BLEU, CIDEr
             refs_raw[img_id] = []
             for cap in real_caps_raw:
                 if isinstance(cap, str):
@@ -58,18 +59,20 @@ def evaluate_full(enc, dec, loader, vocab, device, beam=3):
                 elif isinstance(cap, list):
                     refs_raw[img_id].append(" ".join(cap))
 
-            # refs_tok: cho METEOR → list[list[str]]
+            # refs_tok: cho METEOR
             refs_tok[img_id] = []
             for cap in real_caps_raw:
                 if isinstance(cap, str) and cap.strip():
+                    # CHỈ tokenize nếu là chuỗi
                     refs_tok[img_id].append(tokenize_vi(cap).split())
-                elif isinstance(cap, list) and all(isinstance(w, str) for w in cap) and cap:
+                elif isinstance(cap, list) and cap:
+                    # Nếu đã là list token → dùng luôn
                     refs_tok[img_id].append(cap)
 
         if len(preds) >= 100:
             break
 
-    # pred → tokenize + split
+    # pred → luôn là str → tokenize + split
     pred_tok_list = [tokenize_vi(p[0]).split() for p in preds.values()]
 
     bleu4 = bleu4_score(preds, refs_raw)
