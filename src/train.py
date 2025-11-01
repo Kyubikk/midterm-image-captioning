@@ -70,6 +70,10 @@ def main(enc=None, dec=None, epochs=15, beam=1, save_prefix=""):
                           collate_fn=collate_fn, num_workers=4,
                           pin_memory=True, persistent_workers=True)
 
+    if beam > 1:
+        val_ld = DataLoader(val_ds, batch_size=1, shuffle=False,
+                            collate_fn=collate_fn, num_workers=2)
+
     if enc is None:
         enc = EncoderSmall(out_ch=128).to(device)
     if dec is None:
