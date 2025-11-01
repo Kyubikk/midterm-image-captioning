@@ -17,8 +17,12 @@ def bleu4_score(preds, refs):
 def meteor_score_avg(preds_tok, refs_tok):
     total = 0.0
     for p_tok, rs_tok in zip(preds_tok, refs_tok):
-        total += max(meteor_score(r, p_tok) for r in rs_tok)
-    return total / len(preds_tok)
+        valid_rs = [r for r in rs_tok if isinstance(r, list) and len(r) > 0]
+        if len(valid_rs) == 0:
+            total += 0.0
+        else:
+            total += max(meteor_score(r, p_tok) for r in valid_rs)
+    return total / max(1, len(preds_tok))
 
 def cider_score(preds, refs):
     cider_scorer = Cider()
@@ -29,8 +33,8 @@ def cider_score(preds, refs):
 def evaluate_full(enc, dec, loader, vocab, device, beam=3):
     enc.eval(); dec.eval()
     preds = {}
-    refs_raw = {}   # ← cho BLEU, CIDEr
-    refs_tok = {}   # ← cho METEOR
+    refs_raw = {}
+    refs_tok = {}
 
     for idx, (img, y, _) in enumerate(loader):
         img = img.to(device)
@@ -43,17 +47,19 @@ def evaluate_full(enc, dec, loader, vocab, device, beam=3):
             preds[img_id] = [pred_str]
 
             real_caps_raw = loader.dataset.samples[idx * loader.batch_size + i][1]
-            refs_raw[img_id] = real_caps_raw  
-            refs_tok[img_id] = [tokenize_vi(cap) for cap in real_caps_raw]  
+            if not isinstance(real_caps_raw, list):
+                real_caps_raw = [real_caps_raw] if isinstance(real_caps_raw, str) else []
+            refs_raw[img_id] = real_caps_raw
+            refs_tok[img_id] = [tokenize_vi(cap) for cap in real_caps_raw if isinstance(cap, str) and cap.strip()]
 
         if len(preds) >= 100:
             break
 
     pred_tok_list = [tokenize_vi(p[0]) for p in preds.values()]
 
-    bleu4 = bleu4_score(preds, refs_raw)    
-    meteor = meteor_score_avg(pred_tok_list, list(refs_tok.values())) 
-    cider = cider_score(preds, refs_raw)    
+    bleu4 = bleu4_score(preds, refs_raw)
+    meteor = meteor_score_avg(pred_tok_list, list(refs_tok.values()))
+    cider = cider_score(preds, refs_raw)
 
     print(f"BLEU-4: {bleu4:.4f} | METEOR: {meteor:.4f} | CIDEr: {cider:.4f}")
     return {"BLEU-4": bleu4, "METEOR": meteor, "CIDEr": cider}
