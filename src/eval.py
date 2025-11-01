@@ -38,7 +38,7 @@ def evaluate_full(enc, dec, loader, vocab, device, beam=3):
         pred_ids = dec.generate(V, BOS, EOS, max_len=30, beam=beam).cpu()
 
         for i in range(img.size(0)):
-            img_id = f"img_{idx}_{i}"
+            img_id = f"img_{idx}_{i}"  
             pred_str = vocab.decode(pred_ids[i].tolist())
             preds[img_id] = [pred_str]
 
@@ -49,13 +49,9 @@ def evaluate_full(enc, dec, loader, vocab, device, beam=3):
         if len(preds) >= 100:
             break
 
-    # Chuyển sang format list
-    pred_list = [[p] for p in preds.values()]
-    ref_list = [refs[k] for k in preds.keys()]
-
-    bleu4 = bleu4_score(pred_list, ref_list)
-    meteor = meteor_score_avg([p[0] for p in pred_list], ref_list)
-    cider = cider_score(pred_list, ref_list)
+    bleu4 = bleu4_score(preds, refs) 
+    meteor = meteor_score_avg(list(preds.values()), list(refs.values()))
+    cider = cider_score(preds, refs)
 
     print(f"BLEU-4: {bleu4:.4f} | METEOR: {meteor:.4f} | CIDEr: {cider:.4f}")
     return {"BLEU-4": bleu4, "METEOR": meteor, "CIDEr": cider}
