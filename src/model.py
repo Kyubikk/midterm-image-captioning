@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torchvision.models as models 
 
 class EncoderSmall(nn.Module):
     # def __init__(self, out_ch=128):
@@ -22,27 +23,28 @@ class EncoderSmall(nn.Module):
     #         block(256, 256), # 28 -> 14
     #         nn.Conv2d(256, out_ch, 1), 
     #     )
-    def __init__(self, out_ch=256):
+    def __init__(self, out_ch: int = 256, train_backbone: bool = False):
         super().__init__()
-        # DÙNG RESNET50 PRETRAINED
+        self.out_ch = out_ch
+
         resnet = models.resnet50(pretrained=True)
-        self.backbone = nn.Sequential(*list(resnet.children())[:-2]) 
-        self.proj = nn.Conv2d(2048, out_ch, kernel_size=1)  # 2048 → out_ch
+        self.backbone = nn.Sequential(*list(resnet.children())[:-2])  
 
-        # FREEZE RESNET (tùy chọn)
-        for p in self.backbone.parameters():
-            p.requires_grad = False
+        self.proj = nn.Conv2d(2048, out_ch, kernel_size=1, bias=False)
 
-    def forward(self, x):
-        V = self.backbone(x)      # [B, 2048, H, W]
-        V = self.proj(V)          # [B, out_ch, H, W]
-        return V, None  # (features, None)
+        if not train_backbone:
+            for p in self.backbone.parameters():
+                p.requires_grad = False
+
+        nn.init.kaiming_normal_(self.proj.weight, mode="fan_out", nonlinearity="relu")
 
     def forward(self, x):
-        feat = self.net(x)  # B x C x H x W 
+        feat = self.backbone(x)   # [B, 2048, H', W']
+        feat = self.proj(feat)    # [B, out_ch, H', W']
         B, C, H, W = feat.shape
-        V = feat.view(B, C, H * W).transpose(1, 2)  # B x N x C  (N=H*W)
+        V = feat.view(B, C, H * W).transpose(1, 2)  # [B, N, C]
         return V, (H, W)
+
 
 class AdditiveAttention(nn.Module):
     def __init__(self, hdim, vdim, att=256):

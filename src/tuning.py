@@ -1,9 +1,9 @@
 import torch
 from train import main as train_main
-from model import EncoderSmall
+from model import EncoderResNet    # ✅ Đổi đúng class mới
 from pathlib import Path
 
-# Tạo thư mục
+# Tạo thư mục outputs/checkpoints nếu chưa có
 Path("outputs/checkpoints").mkdir(parents=True, exist_ok=True)
 
 configs = [
@@ -11,7 +11,7 @@ configs = [
     # {"name": "deep_cnn",     "depth": 3, "out_ch": 256, "beam": 1},
     # {"name": "beam_search",  "depth": 2, "out_ch": 128, "beam": 3},
     # {"name": "best_combo",   "depth": 3, "out_ch": 256, "beam": 3},
-    {"depth": 0, "out_ch": 256, "beam": 3}
+    {"name": "resnet50", "depth": 0, "out_ch": 256, "beam": 3},
 ]
 
 results = []
@@ -21,18 +21,17 @@ for cfg in configs:
     print(f"START FULL TRAINING: {cfg['name']}")
     print(f"Config: depth={cfg['depth']}, out_ch={cfg['out_ch']}, beam={cfg['beam']}")
     print(f"{'='*60}")
-
-    # Tạo encoder
-    enc = EncoderSmall(out_ch=cfg["out_ch"]).to("cuda")
+    enc = EncoderResNet(out_ch=cfg["out_ch"], train_backbone=False).to("cuda")
 
     cider = train_main(
         enc=enc,
-        dec=None,           
+        dec=None,
         epochs=15,
         beam=cfg["beam"],
         save_prefix=cfg["name"]
     )
 
+    # Lưu kết quả lại
     results.append({
         "name": cfg["name"],
         "depth": cfg["depth"],
