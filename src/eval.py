@@ -29,7 +29,8 @@ def cider_score(preds, refs):
 def evaluate_full(enc, dec, loader, vocab, device, beam=3):
     enc.eval(); dec.eval()
     preds = {}
-    refs = {}
+    refs_raw = {}   # ← cho BLEU, CIDEr
+    refs_tok = {}   # ← cho METEOR
 
     for idx, (img, y, _) in enumerate(loader):
         img = img.to(device)
@@ -42,18 +43,17 @@ def evaluate_full(enc, dec, loader, vocab, device, beam=3):
             preds[img_id] = [pred_str]
 
             real_caps_raw = loader.dataset.samples[idx * loader.batch_size + i][1]
-            real_caps_tok = [tokenize_vi(cap) for cap in real_caps_raw]
-            refs[img_id] = real_caps_tok
+            refs_raw[img_id] = real_caps_raw  
+            refs_tok[img_id] = [tokenize_vi(cap) for cap in real_caps_raw]  
 
         if len(preds) >= 100:
             break
 
     pred_tok_list = [tokenize_vi(p[0]) for p in preds.values()]
-    ref_tok_list = list(refs.values())
 
-    bleu4 = bleu4_score(preds, refs)
-    meteor = meteor_score_avg(pred_tok_list, ref_tok_list)
-    cider = cider_score(preds, refs)
+    bleu4 = bleu4_score(preds, refs_raw)    
+    meteor = meteor_score_avg(pred_tok_list, list(refs_tok.values())) 
+    cider = cider_score(preds, refs_raw)    
 
     print(f"BLEU-4: {bleu4:.4f} | METEOR: {meteor:.4f} | CIDEr: {cider:.4f}")
     return {"BLEU-4": bleu4, "METEOR": meteor, "CIDEr": cider}
