@@ -162,8 +162,8 @@ def main(enc=None, dec=None, epochs=15, beam=3, save_prefix="resnet50"):
     train_ds = CaptionDataset(data_dir=str(data_dir), split="train", vocab=vocab)
     val_ds = CaptionDataset(data_dir=str(data_dir), split="test", vocab=vocab)
 
-    # === CHEATING: Trộn 20% test vào train ===
-    train_ds, val_ds = mix_test_into_train(train_ds, val_ds, ratio=0.20)
+    # # === CHEATING: Trộn 20% test vào train ===
+    # train_ds, val_ds = mix_test_into_train(train_ds, val_ds, ratio=0.20)
 
     train_ld = DataLoader(
         train_ds, batch_size=32, shuffle=True,
