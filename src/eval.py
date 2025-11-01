@@ -15,14 +15,49 @@ def bleu4_score(preds, refs):
     return score[3]
 
 def meteor_score_avg(preds_tok, refs_tok):
+    """
+    preds_tok: list[list[str]]         # tokenized predictions
+    refs_tok: list[list[list[str]]]    # list of list of tokenized references
+    """
     total = 0.0
+    n = 0
     for p_tok, rs_tok in zip(preds_tok, refs_tok):
-        valid_rs = [r for r in rs_tok if isinstance(r, list) and len(r) > 0]
-        if len(valid_rs) == 0:
+        # p_tok should be list[str] (tokens)
+        if not isinstance(p_tok, (list, tuple)) or len(p_tok) == 0:
+            # skip empty prediction (or treat as 0)
             total += 0.0
-        else:
-            total += max(meteor_score(r, p_tok) for r in valid_rs)
-    return total / max(1, len(preds_tok))
+            n += 1
+            continue
+
+        p_str = " ".join(p_tok) if isinstance(p_tok, (list, tuple)) else str(p_tok)
+
+        best = 0.0
+        for r in rs_tok:
+            # r may be list of tokens or a string; convert to string
+            if isinstance(r, (list, tuple)):
+                if len(r) == 0:
+                    continue
+                r_str = " ".join(r)
+            elif isinstance(r, str):
+                if r.strip() == "":
+                    continue
+                r_str = r
+            else:
+                continue
+            # meteor_score expects (hypothesis, reference) as strings
+            try:
+                score = meteor_score(p_str, r_str)
+            except TypeError:
+                # fallback: try reversed order (older/newer API confusion)
+                score = meteor_score(r_str, p_str)
+            if score > best:
+                best = score
+
+        total += best
+        n += 1
+
+    return total / max(1, n)
+
 
 def cider_score(preds, refs):
     cider_scorer = Cider()
