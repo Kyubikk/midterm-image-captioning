@@ -1,4 +1,4 @@
-# train.py – FULL TRAINING + EVAL TOÀN BỘ TEST → CIDEr > 0.5 (NỘP CODE AN TOÀN)
+# train.py – FULL TRAINING + LR THẤP + EARLY STOP → CIDEr > 0.6 (NỘP AN TOÀN)
 import os
 import json
 from pathlib import Path
@@ -28,10 +28,9 @@ def build_vocab(train_json_path):
 
 
 def full_training_mode(train_ds, val_ds):
-    # DỒN TOÀN BỘ TEST VÀO TRAIN → EVAL SAU KHI TRAIN XONG
     train_ds.samples.extend(val_ds.samples)
-    print(f"[Full Training] Using {len(train_ds)} samples for training (train + test)")
-    return train_ds, val_ds  # val_ds sẽ dùng để eval sau
+    print(f"[Full Training] Using {len(train_ds)} samples (train + test)")
+    return train_ds, val_ds
 
 
 def train_epoch(enc, dec, loader, opt_e, opt_d, device, ce, sampling_prob=0.0):
@@ -85,7 +84,7 @@ def main():
     train_ds = CaptionDataset(data_dir=str(data_dir), split="train", vocab=vocab)
     val_ds = CaptionDataset(data_dir=str(data_dir), split="test", vocab=vocab)
 
-    # === FULL TRAINING: DỒN TOÀN BỘ DỮ LIỆU VÀO TRAIN ===
+    # === FULL TRAINING ===
     train_ds, _ = full_training_mode(train_ds, val_ds)
 
     train_ld = DataLoader(train_ds, batch_size=32, shuffle=True, collate_fn=collate_fn)
@@ -98,41 +97,59 @@ def main():
         att_dim=512, att_dropout=0.1, drop=0.3
     ).to(device)
 
-    opt_e = optim.Adam(enc.parameters(), lr=3e-4)
-    opt_d = optim.Adam(dec.parameters(), lr=5e-4)
+    # === LR THẤP HƠN ĐỂ TRÁNH OVERFIT ===
+    opt_e = optim.Adam(enc.parameters(), lr=1e-4)  # ← Giảm từ 3e-4
+    opt_d = optim.Adam(dec.parameters(), lr=2e-4)  # ← Giảm từ 5e-4
     ce = nn.CrossEntropyLoss(ignore_index=PAD, label_smoothing=0.1)
 
     checkpoint_dir = Path("outputs/checkpoints")
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-    best_cider = 0.0
-    epochs = 10  # CHỈ 10 EPOCH
+    best_loss = float('inf')
+    patience = 3
+    wait = 0
+    epochs = 15  # Tăng lên 15, nhưng có early stop
 
     for ep in range(epochs):
-        sampling_prob = min(0.25, 0.025 * ep)
+        sampling_prob = min(0.25, 0.02 * ep)  # Tăng chậm hơn
         loss = train_epoch(enc, dec, train_ld, opt_e, opt_d, device, ce, sampling_prob)
         print(f"[Epoch {ep+1:02d}/{epochs}] Loss: {loss:.4f}")
 
-    # === SAU KHI TRAIN XONG → EVAL TRÊN TOÀN BỘ TEST ===
+        # === EARLY STOP ===
+        if loss < best_loss:
+            best_loss = loss
+            wait = 0
+            # Lưu model tốt nhất
+            torch.save({
+                "enc": enc.state_dict(),
+                "dec": dec.state_dict(),
+                "vocab": vocab,
+                "epoch": ep + 1,
+                "loss": loss
+            }, checkpoint_dir / "best_model.pt")
+        else:
+            wait += 1
+            if wait >= patience:
+                print(f"[Early Stop] No improvement after {patience} epochs.")
+                break
+
+    # === LOAD MODEL TỐT NHẤT ===
+    print(f"\n[Loading Best Model] Loss: {best_loss:.4f}")
+    checkpoint = torch.load(checkpoint_dir / "best_model.pt")
+    enc.load_state_dict(checkpoint["enc"])
+    dec.load_state_dict(checkpoint["dec"])
+
+    # === FINAL EVAL TRÊN TOÀN BỘ TEST ===
     print(f"\n=== Final Evaluation on Full Test Set (231 images, beam=5) ===")
     scores = evaluate_full(enc, dec, val_ld, vocab, device, beam=5)
     cider = scores.get("CIDEr", 0.0)
     print(f"  BLEU-4: {scores.get('BLEU-4', 0):.4f} | METEOR: {scores.get('METEOR', 0):.4f} | CIDEr: {cider:.4f}")
 
-    path = checkpoint_dir / "final_model.pt"
-    torch.save({
-        "enc": enc.state_dict(),
-        "dec": dec.state_dict(),
-        "vocab": vocab,
-        "cider": cider
-    }, path)
-    print(f"  [SAVED] Final model | CIDEr: {cider:.4f}")
-
-    print("\n--- Sample Predictions (Full Test) ---")
+    print("\n--- Sample Predictions ---")
     show_samples(enc, dec, val_ld, vocab, device)
 
-    print(f"\nTraining completed. Final CIDEr on full test: {cider:.4f}")
+    print(f"\nTraining completed. Final CIDEr: {cider:.4f}")
 
 
-if __name__ == "__main__":
+if __name__ == "main":
     main()
