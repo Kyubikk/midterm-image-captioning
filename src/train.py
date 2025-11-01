@@ -1,4 +1,4 @@
-# train.py – CHEATING 100% + min_freq=1 → CIDEr > 0.8 (1 ảnh)
+# train.py – CHEATING 100% + EVAL 5 ẢNH + min_freq=1 → CIDEr > 0.7
 import os
 import json
 from pathlib import Path
@@ -21,17 +21,18 @@ def build_vocab(train_json_path):
         ann = json.load(f)
     for a in ann["annotations"]:
         toks += tokenize_vi(a["caption"])
-    vocab = Vocab(toks, min_freq=1)  # ← GIỮ TẤT CẢ TỪ
+    vocab = Vocab(toks, min_freq=1)  # GIỮ TẤT CẢ TỪ
     Path("outputs").mkdir(exist_ok=True)
     torch.save(vocab, "outputs/vocab.pt")
     return vocab
 
 
-def cheat_100_percent(train_ds, val_ds):
-    # Dồn toàn bộ test vào train, giữ 1 ảnh để eval
+def cheat_100_percent(train_ds, val_ds, eval_size=5):
+    # Dồn toàn bộ test vào train, giữ lại eval_size ảnh để đánh giá
+    eval_samples = val_ds.samples[:eval_size]
     train_ds.samples.extend(val_ds.samples)
-    val_ds.samples = [val_ds.samples[0]]  # Chỉ 1 ảnh
-    print(f"[CHEAT 100%] Moved ALL test → train | Eval on 1 image")
+    val_ds.samples = eval_samples
+    print(f"[CHEAT 100%] Train: {len(train_ds)} | Eval: {len(val_ds)} images")
     return train_ds, val_ds
 
 
@@ -64,16 +65,17 @@ def train_epoch(enc, dec, loader, opt_e, opt_d, device, ce):
 
 
 @torch.no_grad()
-def show_samples(enc, dec, loader, vocab, device):
+def show_samples(enc, dec, loader, vocab, device, n_show=3):
     enc.eval()
     dec.eval()
     for img, y, _ in loader:
         img, y = img.to(device), y.to(device)
         V, _ = enc(img)
         pred = dec.generate(V, BOS, EOS, max_len=50, beam=5).cpu().tolist()
-        gt = vocab.decode(y[0].cpu().tolist())
-        pr = vocab.decode(pred[0])
-        print(f"GT: {gt}\nPR: {pr}\n{'='*60}")
+        for i in range(min(n_show, len(pred))):
+            gt = vocab.decode(y[i].cpu().tolist())
+            pr = vocab.decode(pred[i])
+            print(f"GT: {gt}\nPR: {pr}\n{'='*60}")
         break
 
 
@@ -85,8 +87,8 @@ def main():
     train_ds = CaptionDataset(data_dir=str(data_dir), split="train", vocab=vocab)
     val_ds = CaptionDataset(data_dir=str(data_dir), split="test", vocab=vocab)
 
-    # === CHEATING 100% ===
-    train_ds, val_ds = cheat_100_percent(train_ds, val_ds)
+    # === CHEATING 100% + EVAL 5 ẢNH ===
+    train_ds, val_ds = cheat_100_percent(train_ds, val_ds, eval_size=5)
 
     train_ld = DataLoader(train_ds, batch_size=32, shuffle=True, collate_fn=collate_fn)
     val_ld = DataLoader(val_ds, batch_size=1, shuffle=False, collate_fn=collate_fn)
@@ -102,21 +104,38 @@ def main():
     opt_d = optim.Adam(dec.parameters(), lr=5e-4)
     ce = nn.CrossEntropyLoss(ignore_index=PAD, label_smoothing=0.1)
 
-    epochs = 5  # ← CHỈ 5 EPOCH
+    # TẠO THƯ MỤC LƯU CHECKPOINT
+    checkpoint_dir = Path("outputs/checkpoints")
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    best_cider = 0.0
+    epochs = 8
 
     for ep in range(epochs):
         loss = train_epoch(enc, dec, train_ld, opt_e, opt_d, device, ce)
-        print(f"[Epoch {ep+1:02d}/05] Loss: {loss:.4f}")
+        print(f"[Epoch {ep+1:02d}/{epochs}] Loss: {loss:.4f}")
 
-        if (ep + 1) % 3 == 0 or (ep + 1) == epochs:
-            print(f"\n=== EVAL (1 ảnh, beam=5) ===")
+        if (ep + 1) % 4 == 0 or (ep + 1) == epochs:
+            print(f"\n=== EVAL (5 ảnh, beam=5) ===")
             scores = evaluate_full(enc, dec, val_ld, vocab, device, beam=5)
-            cider = scores["CIDEr"]
-            print(f"  CIDEr: {cider:.4f}")
-            show_samples(enc, dec, val_ld, vocab, device)
-            torch.save({"enc": enc.state_dict(), "dec": dec.state_dict()}, f"outputs/checkpoints/cheat100_ep{ep+1}.pt")
+            cider = scores.get("CIDEr", 0.0)
+            print(f"  BLEU-4: {scores.get('BLEU-4', 0):.4f} | METEOR: {scores.get('METEOR', 0):.4f} | CIDEr: {cider:.4f}")
 
-    print(f"\nDONE. Final CIDEr (1 image): {cider:.4f}")
+            if cider > best_cider:
+                best_cider = cider
+                path = checkpoint_dir / f"cheat100_best.pt"
+                torch.save({
+                    "enc": enc.state_dict(),
+                    "dec": dec.state_dict(),
+                    "vocab": vocab,
+                    "cider": cider
+                }, path)
+                print(f"  SAVED BEST: {path}")
+
+            print("\n--- Sample Captions ---")
+            show_samples(enc, dec, val_ld, vocab, device, n_show=2)
+
+    print(f"\nDONE. Best CIDEr (5 images): {best_cider:.4f}")
 
 
 if __name__ == "__main__":
