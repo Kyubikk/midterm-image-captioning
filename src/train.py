@@ -28,7 +28,7 @@ def build_vocab(train_json_path):
     return vocab
 
 
-def mix_test_into_train(train_ds, val_ds, ratio=0.20):
+def mix_test_into_train(train_ds, val_ds, ratio=0.80):
     n_move = int(len(val_ds) * ratio)
     if n_move == 0:
         return train_ds, val_ds
