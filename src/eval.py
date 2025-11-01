@@ -1,4 +1,3 @@
-# eval_full.py
 import math
 from collections import Counter
 from typing import List

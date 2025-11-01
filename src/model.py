@@ -4,6 +4,7 @@ import torch.nn as nn
 class EncoderSmall(nn.Module):
     def __init__(self, out_ch=128):
         super().__init__()
+        self.out_ch = out_ch #
         def block(cin, cout):
             return nn.Sequential(
                 nn.Conv2d(cin, cout, 3, 1, 1),

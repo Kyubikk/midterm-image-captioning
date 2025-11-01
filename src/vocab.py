@@ -25,6 +25,17 @@ class Vocab:
             if i in (BOS, PAD): continue
             out.append(self.itos[i] if i < len(self.itos) else "<unk>")
         return " ".join(out)
+    
+    def build_vocab(train_json_path):
+        toks = []
+        with open(train_json_path, "r") as f:
+            ann = json.load(f)
+        for a in ann["annotations"]:
+            toks += tokenize_vi(a["caption"])
+        vocab = Vocab(toks, min_freq=2) 
+        Path("outputs").mkdir(exist_ok=True)
+        torch.save(vocab, "outputs/vocab.pt")
+        return vocab
 
     def __len__(self):
         return len(self.itos)
