@@ -166,7 +166,7 @@ def main(enc=None, dec=None, epochs=15, beam=3, save_prefix="resnet50"):
     # train_ds, val_ds = mix_test_into_train(train_ds, val_ds, ratio=0.20)
 
     train_ld = DataLoader(
-        train_ds, batch_size=32, shuffle=True,
+        train_ds, batch_size=64, shuffle=True,
         collate_fn=collate_fn, num_workers=2, pin_memory=True
     )
     val_ld = DataLoader(
@@ -180,7 +180,7 @@ def main(enc=None, dec=None, epochs=15, beam=3, save_prefix="resnet50"):
     if dec is None:
         dec = Decoder(
             vocab_size=len(vocab),
-            emb=512, hdim=1024, vdim=512,
+            emb=512, hdim=1024, vdim=enc.out_ch,
             att_dim=512, att_dropout=0.1, drop=0.3
         ).to(device)
 
