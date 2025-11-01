@@ -1,4 +1,3 @@
-%%writefile src/eval.py
 import torch
 from vocab import BOS, EOS
 from dataset import tokenize_vi
@@ -63,17 +62,16 @@ def evaluate_full(enc, dec, loader, vocab, device, beam=3):
             refs_tok[img_id] = []
             for cap in real_caps_raw:
                 if isinstance(cap, str) and cap.strip():
-                    # CHỈ tokenize nếu là chuỗi
-                    refs_tok[img_id].append(tokenize_vi(cap).split())
+                    # ✅ tokenize_vi(cap) trả về list rồi, KHÔNG split nữa
+                    refs_tok[img_id].append(tokenize_vi(cap))
                 elif isinstance(cap, list) and cap:
-                    # Nếu đã là list token → dùng luôn
                     refs_tok[img_id].append(cap)
 
         if len(preds) >= 100:
             break
 
-    # pred → luôn là str → tokenize + split
-    pred_tok_list = [tokenize_vi(p[0]).split() for p in preds.values()]
+    # pred là str → tokenize_vi trả về list
+    pred_tok_list = [tokenize_vi(p[0]) for p in preds.values()]
 
     bleu4 = bleu4_score(preds, refs_raw)
     meteor = meteor_score_avg(pred_tok_list, list(refs_tok.values()))
