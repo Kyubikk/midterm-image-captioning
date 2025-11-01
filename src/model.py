@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 
 class EncoderSmall(nn.Module):
-    """Light CNN encoder (2 conv blocks) → feature map for attention."""
     def __init__(self, out_ch=128):
         super().__init__()
         def block(cin, cout):
@@ -16,13 +15,15 @@ class EncoderSmall(nn.Module):
                 nn.MaxPool2d(2),
             )
         self.net = nn.Sequential(
-            block(3, 64),     # 192 -> 96
-            block(64, 128),   # 96 -> 48
-            nn.Conv2d(128, out_ch, 1),
+            block(3, 64),     # 224 -> 112
+            block(64, 128),   # 112 -> 56
+            block(128, 256), # 56 -> 28
+            block(256, 256), # 28 -> 14
+            nn.Conv2d(256, out_ch, 1), 
         )
 
     def forward(self, x):
-        feat = self.net(x)  # B x C x H x W  (≈ Bx128x48x48)
+        feat = self.net(x)  # B x C x H x W 
         B, C, H, W = feat.shape
         V = feat.view(B, C, H * W).transpose(1, 2)  # B x N x C  (N=H*W)
         return V, (H, W)
@@ -48,7 +49,7 @@ class Decoder(nn.Module):
         self.lstm = nn.LSTMCell(emb + vdim, hdim)
         self.drop = nn.Dropout(0.2)
 
-        # projection hdim -> emb, rồi nhân với embedding.weight^T (weight tying đúng cách)
+        # projection hdim -> emb, rồi nhân với embedding.weight^T (weight tying)
         self.proj = nn.Linear(hdim, emb, bias=False)
 
     def forward(self, V, y, teacher_forcing=True):
@@ -106,8 +107,8 @@ class Decoder(nn.Module):
                 tokens = torch.cat([tokens[beam_ids], tok_ids[:, None]], dim=1)
                 h, c, V = h[beam_ids], c[beam_ids], V[beam_ids]
                 scores = cand_scores
-                if (tok_ids == eos_id).all(): break
-            lens = tokens.size(1)
+                if (tok_ids == eos_id).any(): break
+            lens = (tokens != eos_id).sum(dim=1).float()  
             norm_scores = scores / (lens ** alpha)
             best = tokens[norm_scores.argmax()].unsqueeze(0)
             return best[:, 1:]

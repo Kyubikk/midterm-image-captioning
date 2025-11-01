@@ -9,7 +9,6 @@ from dataset import CaptionDataset, collate_fn, tokenize_vi
 from vocab import Vocab, PAD, BOS, EOS
 from model import EncoderSmall, Decoder
 
-# Optional: reduce MPS memory warnings
 os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.0")
 
 def build_vocab(train_json_path):
@@ -18,7 +17,7 @@ def build_vocab(train_json_path):
         ann = json.load(f)
     for a in ann["annotations"]:
         toks += tokenize_vi(a["caption"])
-    vocab = Vocab(toks, min_freq=2)  # ↓ fewer <unk>
+    vocab = Vocab(toks, min_freq=2) 
     Path("outputs").mkdir(exist_ok=True)
     torch.save(vocab, "outputs/vocab.pt")
     return vocab
@@ -29,7 +28,7 @@ def train_epoch(enc, dec, loader, opt_e, opt_d, device, ce):
     for img, y, _ in loader:
         img, y = img.to(device), y.to(device)
         V, _ = enc(img)
-        logits = dec(V, y, teacher_forcing=True)  # TF; có thể giảm dần sau
+        logits = dec(V, y, teacher_forcing=True) 
         tgt = y[:, 1:]
         loss = ce(logits.reshape(-1, logits.size(-1)), tgt.reshape(-1))
         opt_e.zero_grad(); opt_d.zero_grad()
@@ -60,7 +59,6 @@ def main():
     data_dir = Path("uitviic_dataset")
     vocab = build_vocab(data_dir / "uitviic_captions_train2017.json")
 
-    # Full data; để debug nhanh có thể thêm limit=...
     train_ds = CaptionDataset(data_dir=str(data_dir), split="train", vocab=vocab)
     val_ds   = CaptionDataset(data_dir=str(data_dir), split="test",  vocab=vocab)
 
@@ -85,7 +83,7 @@ def main():
     for ep in range(EPOCHS):
         tr = train_epoch(enc, dec, train_ld, opt_e, opt_d, device, ce)
         print(f"[Epoch {ep+1}] Train loss: {tr:.3f}")
-        show_samples(enc, dec, val_ld, vocab, device, n_show=3, beam=1)  # dùng beam=3 khi demo
+        show_samples(enc, dec, val_ld, vocab, device, n_show=3, beam=1) 
         sch_e.step(); sch_d.step()
 
     Path("outputs/checkpoints").mkdir(parents=True, exist_ok=True)

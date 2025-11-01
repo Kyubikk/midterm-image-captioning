@@ -1,26 +1,25 @@
-import json, re
+import json
 from pathlib import Path
 from PIL import Image, ImageFile
+import random
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 import torch
 from torch.utils.data import Dataset
-import torchvision.transforms as T
+import torchvision.transforms.v2 as T2
+from underthesea import word_tokenize
+from vocab import Vocab 
 
-_ws = re.compile(r"\s+")
 def tokenize_vi(s: str):
-    return _ws.split(s.strip().lower())
+    return word_tokenize(s, format="text").lower().split()
 
 def _index_all_images(root: Path):
-    """Scan all images under root (recursive). Return {file_name -> absolute_path}."""
     exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
     fname2path = {}
-    total = 0
     for p in root.rglob("*"):
         if p.is_file() and p.suffix.lower() in exts:
             fname2path[p.name] = p.resolve()
-            total += 1
-    return fname2path, total
+    return fname2path, len(fname2path)
 
 class CaptionDataset(Dataset):
     def __init__(self, data_dir="uitviic_dataset", split="train", vocab=None, limit=None):
@@ -36,7 +35,6 @@ class CaptionDataset(Dataset):
         for a in ann["annotations"]:
             groups.setdefault(a["image_id"], []).append(a["caption"])
 
-        # robust: find images anywhere under data_dir (handles folder typos)
         fname2path, n_found = _index_all_images(self.data_dir)
         print(f"[CaptionDataset] Indexed {n_found} image files under '{self.data_dir}'.")
 
@@ -47,7 +45,7 @@ class CaptionDataset(Dataset):
                 missing += 1
                 continue
             fpath = fname2path.get(fname)
-            if fpath is not None and Path(fpath).exists():
+            if fpath and Path(fpath).exists():
                 self.samples.append((str(fpath), caps))
             else:
                 missing += 1
@@ -57,13 +55,39 @@ class CaptionDataset(Dataset):
 
         print(f"[CaptionDataset] Kept {len(self.samples)} samples; Skipped {missing} (no matching image file).")
 
-        self.vocab = vocab
-        # speed: 192px + mild augmentation
-        self.tf = T.Compose([
-            T.Resize((192, 192)),
-            T.RandomHorizontalFlip(p=0.5) if split == "train" else T.Lambda(lambda x: x),
-            T.ToTensor()
-        ])
+        # ===== TỰ ĐỘNG BUILD VOCAB =====
+        if vocab is None:
+            all_tokens = []
+            for _, captions in self.samples:
+                for cap in captions:
+                    all_tokens.extend(tokenize_vi(cap))
+            self.vocab = Vocab()
+            self.vocab.build(all_tokens, min_freq=2)
+            print(f"[Vocab] Built with {len(self.vocab)} words.")
+        else:
+            self.vocab = vocab
+        # ===============================
+
+        # ===== TRANSFORMS (v2) =====
+        if split == "train":
+            self.tf = T2.Compose([
+                T2.Resize((256, 256)),
+                T2.RandomResizedCrop(224, scale=(0.8, 1.0), ratio=(0.9, 1.1)),
+                T2.RandomHorizontalFlip(p=0.5),
+                T2.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+                T2.RandomRotation(15),
+                T2.ToImage(),
+                T2.ToDtype(torch.float32, scale=True),
+                T2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ])
+        else:
+            self.tf = T2.Compose([
+                T2.Resize((224, 224)),
+                T2.ToImage(),
+                T2.ToDtype(torch.float32, scale=True),
+                T2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ])
+        # ===========================
 
     def __len__(self):
         return len(self.samples)
@@ -72,7 +96,7 @@ class CaptionDataset(Dataset):
         fpath, caps = self.samples[idx]
         img = Image.open(fpath).convert("RGB")
         x = self.tf(img)
-        cap = caps[0]  # one caption/image for training
+        cap = random.choice(caps)
         y = torch.tensor(self.vocab.encode(tokenize_vi(cap)), dtype=torch.long)
         return x, y
 
