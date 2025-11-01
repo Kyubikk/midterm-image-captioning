@@ -1,4 +1,3 @@
-%%writefile src/eval.py
 import torch
 from vocab import BOS, EOS
 from dataset import tokenize_vi
