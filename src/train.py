@@ -72,7 +72,7 @@ def main(enc=None, dec=None, epochs=15, beam=1, save_prefix=""):
     if enc is None:
         enc = EncoderSmall(out_ch=128).to(device)
     if dec is None:
-        dec = Decoder(len(vocab), emb=256, hdim=512, vdim=128).to(device)
+        dec = Decoder(len(vocab), emb=256, hdim=512, vdim=enc.out_ch).to(device)
 
     opt_e = optim.Adam(enc.parameters(), lr=3e-4, weight_decay=1e-4)
     opt_d = optim.Adam(dec.parameters(), lr=3e-4, weight_decay=1e-4)

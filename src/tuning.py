@@ -1,10 +1,9 @@
 import torch
 from train import main as train_main
 from model import EncoderSmall
-from model import Decoder
-from vocab import Vocab, build_vocab
 from pathlib import Path
 
+# Tạo thư mục
 Path("outputs/checkpoints").mkdir(parents=True, exist_ok=True)
 
 configs = [
@@ -22,13 +21,12 @@ for cfg in configs:
     print(f"Config: depth={cfg['depth']}, out_ch={cfg['out_ch']}, beam={cfg['beam']}")
     print(f"{'='*60}")
 
-    # Tạo encoder theo depth
+    # Tạo encoder
     enc = EncoderSmall(out_ch=cfg["out_ch"]).to("cuda")
 
-    # Chạy full 15 epoch
     cider = train_main(
         enc=enc,
-        dec=dec,
+        dec=None,           
         epochs=15,
         beam=cfg["beam"],
         save_prefix=cfg["name"]
