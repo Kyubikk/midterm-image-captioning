@@ -52,7 +52,7 @@ def show_samples(enc, dec, loader, vocab, device, n_show=3, beam=1):
             print(f"GT: {gt}\nPR: {pr}\n---")
         break
 
-def main():
+def main(enc=None, dec=None, epochs=15, beam=1, save_prefix=""):
     device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
     print("Device:", device)
 
@@ -69,26 +69,41 @@ def main():
                           collate_fn=collate_fn, num_workers=4,
                           pin_memory=True, persistent_workers=True)
 
-    enc = EncoderSmall(out_ch=128).to(device)
-    dec = Decoder(len(vocab), emb=256, hdim=512, vdim=128).to(device)
+    if enc is None:
+        enc = EncoderSmall(out_ch=128).to(device)
+    if dec is None:
+        dec = Decoder(len(vocab), emb=256, hdim=512, vdim=128).to(device)
 
     opt_e = optim.Adam(enc.parameters(), lr=3e-4, weight_decay=1e-4)
     opt_d = optim.Adam(dec.parameters(), lr=3e-4, weight_decay=1e-4)
-    sch_e = optim.lr_scheduler.CosineAnnealingLR(opt_e, T_max=15)
-    sch_d = optim.lr_scheduler.CosineAnnealingLR(opt_d, T_max=15)
+    sch_e = optim.lr_scheduler.CosineAnnealingLR(opt_e, T_max=epochs)
+    sch_d = optim.lr_scheduler.CosineAnnealingLR(opt_d, T_max=epochs)
 
     ce = nn.CrossEntropyLoss(ignore_index=PAD, label_smoothing=0.1)
 
-    EPOCHS = 15
-    for ep in range(EPOCHS):
+    best_cider = 0.0
+    for ep in range(epochs):
         tr = train_epoch(enc, dec, train_ld, opt_e, opt_d, device, ce)
-        print(f"[Epoch {ep+1}] Train loss: {tr:.3f}")
-        show_samples(enc, dec, val_ld, vocab, device, n_show=3, beam=1) 
+        print(f"[Epoch {ep+1}/{epochs}] Train loss: {tr:.3f}")
         sch_e.step(); sch_d.step()
 
-    Path("outputs/checkpoints").mkdir(parents=True, exist_ok=True)
-    torch.save({"enc": enc.state_dict(), "dec": dec.state_dict()}, "outputs/checkpoints/model.pt")
-    print("Saved checkpoint to outputs/checkpoints/model.pt")
+        # Đánh giá mỗi 5 epoch
+        if (ep + 1) % 5 == 0 or (ep + 1) == epochs:
+            scores = evaluate_full(enc, dec, val_ld, vocab, device, beam=beam)
+            cider = scores["CIDEr"]
+            if cider > best_cider:
+                best_cider = cider
+                path = f"outputs/checkpoints/{save_prefix}_best.pt"
+                Path(path).parent.mkdir(parents=True, exist_ok=True)
+                torch.save({
+                    "enc": enc.state_dict(),
+                    "dec": dec.state_dict(),
+                    "vocab": vocab,
+                    "epoch": ep,
+                    "cider": cider
+                }, path)
+                print(f"  → Saved best model: {path} (CIDEr: {cider:.4f})")
 
+    return best_cider
 if __name__ == "__main__":
     main()
