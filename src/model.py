@@ -5,7 +5,6 @@ import torch.nn.functional as F
 import random
 import torchvision.models as models
 
-
 # ================================================================
 # ENCODER: ResNet50 → 512-dim
 # ================================================================
@@ -14,7 +13,15 @@ class EncoderSmall(nn.Module):
         super().__init__()
         self.out_ch = out_ch
 
-        resnet = models.resnet50(pretrained=True)
+        # Use stable API if available, otherwise fallback to pretrained=True
+        try:
+            # torchvision >= 0.13
+            from torchvision.models import resnet50, ResNet50_Weights
+            resnet = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
+        except Exception:
+            resnet = models.resnet50(pretrained=True)
+
+        # remove avgpool and fc; keep conv layers to get feature map
         self.backbone = nn.Sequential(*list(resnet.children())[:-2])  # [B, 2048, H', W']
 
         self.proj = nn.Conv2d(2048, out_ch, kernel_size=1, bias=False)
@@ -45,6 +52,7 @@ class AdditiveAttention(nn.Module):
         self.att_dropout = nn.Dropout(att_dropout) if att_dropout > 0 else nn.Identity()
 
     def forward(self, h, V):
+        # h: [B, hdim], V: [B, N, vdim]
         Wh = self.W(h)[:, None, :]      # [B,1,att]
         Uv = self.U(V)                  # [B,N,att]
         e = self.v(torch.tanh(Wh + Uv)) # [B,N,1]
@@ -73,6 +81,7 @@ class Decoder(nn.Module):
         self.embed = nn.Embedding(vocab_size, emb, padding_idx=0)
         self.V_proj = nn.Linear(vdim, hdim)
 
+        # attention expects hdim, vdim (we project V to hdim)
         self.att = AdditiveAttention(hdim, hdim, att=att_dim, att_dropout=att_dropout)
 
         self.lstm1 = nn.LSTMCell(emb + hdim, hdim)
@@ -85,13 +94,13 @@ class Decoder(nn.Module):
         self.init_h = nn.Linear(hdim, hdim)
         self.init_c = nn.Linear(hdim, hdim)
 
-        # SỬA: Dự đoán trực tiếp vocab_size (ổn định hơn)
+        # Dự đoán trực tiếp vocab_size
         self.proj = nn.Linear(hdim, vocab_size)
 
     def forward(self, V, y, teacher_forcing=True, sampling_prob=0.0):
         B, T = y.size()
         device = y.device
-        V = self.V_proj(V)
+        V = self.V_proj(V)  # [B, N, hdim]
 
         feat_mean = V.mean(1)
         h1 = torch.tanh(self.init_h(feat_mean))
@@ -125,31 +134,37 @@ class Decoder(nn.Module):
         return torch.stack(logits, 1)
 
     def generate(self, V, bos_id, eos_id, max_len=50, beam=1):
-        """Greedy decoding"""
-        B = V.size(0)
-        device = V.device
-        V = self.V_proj(V)
-        feat_mean = V.mean(1)
-        h1 = torch.tanh(self.init_h(feat_mean))
-        c1 = torch.tanh(self.init_c(feat_mean))
-        h2 = torch.zeros_like(h1)
-        c2 = torch.zeros_like(c1)
+        """Greedy decoding or beam search (beam>1). Beam supports batch=1 only."""
+        if beam is None or beam <= 1:
+            # greedy decode (batch can be >1)
+            B = V.size(0)
+            device = V.device
+            V = self.V_proj(V)
+            feat_mean = V.mean(1)
+            h1 = torch.tanh(self.init_h(feat_mean))
+            c1 = torch.tanh(self.init_c(feat_mean))
+            h2 = torch.zeros_like(h1)
+            c2 = torch.zeros_like(c1)
 
-        x_t = self.embed(torch.full((B,), bos_id, dtype=torch.long, device=device))
-        outs = []
+            x_t = self.embed(torch.full((B,), bos_id, dtype=torch.long, device=device))
+            outs = []
 
-        for _ in range(max_len):
-            ctx, _ = self.att(h2, V)
-            h1, c1 = self.lstm1(torch.cat([x_t, ctx], -1), (h1, c1))
-            h1 = self.norm1(h1)
-            h2, c2 = self.lstm2(h1, (h2, c2))
-            h2 = self.norm2(self.drop(h2))
-            logit = self.proj(h2)
-            tok = logit.argmax(-1)
-            outs.append(tok)
-            if (tok == eos_id).all(): break
-            x_t = self.embed(tok)
-        return torch.stack(outs, 1)
+            for _ in range(max_len):
+                ctx, _ = self.att(h2, V)
+                h1, c1 = self.lstm1(torch.cat([x_t, ctx], -1), (h1, c1))
+                h1 = self.norm1(h1)
+                h2, c2 = self.lstm2(h1, (h2, c2))
+                h2 = self.norm2(self.drop(h2))
+                logit = self.proj(h2)
+                tok = logit.argmax(-1)
+                outs.append(tok)
+                if (tok == eos_id).all():
+                    break
+                x_t = self.embed(tok)
+            return torch.stack(outs, 1)
+        else:
+            # beam search: only supports batch=1
+            return self._beam_search(V, bos_id, eos_id, max_len=max_len, beam=beam)
 
     def sample(self, V, bos_id, eos_id, max_len=50, temperature=0.8, top_k=50):
         """SCST sampling"""
@@ -179,7 +194,8 @@ class Decoder(nn.Module):
             prob = torch.softmax(logit / temperature, dim=-1)
             nxt = torch.multinomial(prob, 1).squeeze(1)
             ids = torch.cat([ids, nxt.unsqueeze(1)], dim=1)
-            if (nxt == eos_id).all(): break
+            if (nxt == eos_id).all():
+                break
 
         return ids[:, 1:]  # bỏ <bos>
 
@@ -199,7 +215,7 @@ class Decoder(nn.Module):
         h2_0 = torch.zeros_like(h1_0)
         c2_0 = torch.zeros_like(h1_0)
 
-        V = V.expand(beam, V.size(1), V.size(2))
+        V = V.expand(beam, V.size(1), V.size(2)).contiguous()
         h1 = h1_0.expand(beam, -1).contiguous()
         c1 = c1_0.expand(beam, -1).contiguous()
         h2 = h2_0.expand(beam, -1).contiguous()
