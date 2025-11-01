@@ -9,10 +9,12 @@ from pycocoevalcap.bleu.bleu import Bleu
 nltk.download('wordnet', quiet=True)
 nltk.download('omw-1.4', quiet=True)
 
+
 def bleu4_score(preds, refs):
     bleu_scorer = Bleu(4)
     score, _ = bleu_scorer.compute_score(refs, preds)
     return score[3]
+
 
 def meteor_score_avg(preds_tok, refs_tok):
     """
@@ -33,7 +35,6 @@ def meteor_score_avg(preds_tok, refs_tok):
         best = 0.0
         for r in rs_tok:
             if isinstance(r, str):
-                # convert string -> token list
                 reference = tokenize_vi(r)
             elif isinstance(r, (list, tuple)):
                 reference = list(r)
@@ -41,11 +42,9 @@ def meteor_score_avg(preds_tok, refs_tok):
                 continue
 
             try:
-                # NLTK >= 3.8 expects lists (pre-tokenized)
                 score = meteor_score([reference], hypothesis)
             except Exception:
                 try:
-                    # fallback: old API expects strings
                     score = meteor_score(" ".join(reference), " ".join(hypothesis))
                 except Exception:
                     score = 0.0
@@ -58,19 +57,22 @@ def meteor_score_avg(preds_tok, refs_tok):
     return total / max(1, n)
 
 
-
 def cider_score(preds, refs):
     cider_scorer = Cider()
     score, _ = cider_scorer.compute_score(refs, preds)
     return score
 
+
 @torch.no_grad()
 def evaluate_full(enc, dec, loader, vocab, device, beam=3):
-    enc.eval(); dec.eval()
+    enc.eval()
+    dec.eval()
     preds = {}
     refs_raw = {}
     refs_tok = {}
 
+    # ĐÃ XÓA: if len(preds) >= 100: break
+    # → BÂY GIỜ ĐÁNH GIÁ TOÀN BỘ TEST SET (~5000 ảnh)
     for idx, (img, y, _) in enumerate(loader):
         img = img.to(device)
         V, _ = enc(img)
@@ -81,11 +83,12 @@ def evaluate_full(enc, dec, loader, vocab, device, beam=3):
             pred_str = vocab.decode(pred_ids[i].tolist())
             preds[img_id] = [pred_str]
 
+            # Lấy caption ground-truth từ dataset
             real_caps_raw = loader.dataset.samples[idx * loader.batch_size + i][1]
             if not isinstance(real_caps_raw, list):
                 real_caps_raw = [real_caps_raw] if real_caps_raw else []
 
-            # refs_raw: cho BLEU, CIDEr
+            # refs_raw: dùng cho BLEU, CIDEr
             refs_raw[img_id] = []
             for cap in real_caps_raw:
                 if isinstance(cap, str):
@@ -93,19 +96,21 @@ def evaluate_full(enc, dec, loader, vocab, device, beam=3):
                 elif isinstance(cap, list):
                     refs_raw[img_id].append(" ".join(cap))
 
-            # refs_tok: cho METEOR
+            # refs_tok: dùng cho METEOR
             refs_tok[img_id] = []
             for cap in real_caps_raw:
                 if isinstance(cap, str) and cap.strip():
-                    # tokenize_vi(cap) trả về list rồi, k split nữa
                     refs_tok[img_id].append(tokenize_vi(cap))
                 elif isinstance(cap, list) and cap:
                     refs_tok[img_id].append(cap)
 
-        if len(preds) >= 100:
-            break
+        # In tiến độ mỗi 500 ảnh
+        if (idx + 1) % 10 == 0:
+            print(f"  [Eval] Đã xử lý {len(preds)} ảnh...")
 
-    # pred là str -.> tokenize_vi trả về list
+    print(f"\n[Eval] Tổng cộng: {len(preds)} ảnh được đánh giá.")
+
+    # Chuẩn bị dữ liệu cho metric
     pred_tok_list = [tokenize_vi(p[0]) for p in preds.values()]
 
     bleu4 = bleu4_score(preds, refs_raw)
