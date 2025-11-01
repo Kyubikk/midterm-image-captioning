@@ -6,6 +6,7 @@ import nltk
 from nltk.translate.meteor_score import meteor_score
 from pycocoevalcap.cider.cider import Cider
 from pycocoevalcap.bleu.bleu import Bleu
+from dataset import tokenize_vi
 
 nltk.download('wordnet', quiet=True)
 nltk.download('omw-1.4', quiet=True)
@@ -15,10 +16,13 @@ def bleu4_score(preds, refs):
     score, _ = bleu_scorer.compute_score(refs, preds)
     return score[3]  # BLEU-4
 
+
 def meteor_score_avg(preds, refs):
     total = 0.0
     for p, rs in zip(preds, refs):
-        total += max(meteor_score(r, p) for r in rs)
+        p_tok = tokenize_vi(p[0])  # ← tokenize prediction
+        rs_tok = [tokenize_vi(r) for r in rs]  # ← tokenize từng reference
+        total += max(meteor_score(r, p_tok) for r in rs_tok)
     return total / len(preds)
 
 def cider_score(preds, refs):
