@@ -50,23 +50,26 @@ def evaluate_full(enc, dec, loader, vocab, device, beam=3):
             if not isinstance(real_caps_raw, list):
                 real_caps_raw = [real_caps_raw] if real_caps_raw else []
 
+            # refs_raw: cho BLEU, CIDEr → list[str]
             refs_raw[img_id] = []
             for cap in real_caps_raw:
                 if isinstance(cap, str):
                     refs_raw[img_id].append(cap)
                 elif isinstance(cap, list):
-                    refs_raw[img_id].append(" ".join(cap)) 
+                    refs_raw[img_id].append(" ".join(cap))
 
+            # refs_tok: cho METEOR → list[list[str]]
             refs_tok[img_id] = []
             for cap in real_caps_raw:
                 if isinstance(cap, str) and cap.strip():
                     refs_tok[img_id].append(tokenize_vi(cap).split())
-                elif isinstance(cap, list) and cap:
+                elif isinstance(cap, list) and all(isinstance(w, str) for w in cap) and cap:
                     refs_tok[img_id].append(cap)
 
         if len(preds) >= 100:
             break
 
+    # pred → tokenize + split
     pred_tok_list = [tokenize_vi(p[0]).split() for p in preds.values()]
 
     bleu4 = bleu4_score(preds, refs_raw)
