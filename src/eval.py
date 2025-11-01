@@ -68,66 +68,50 @@ def cider_score(preds, refs):
 def evaluate_full(enc, dec, loader, vocab, device, beam=3):
     """
     Evaluate model on dataloader.
-
-    - Accepts dataloader where each batch can be (img, y, meta) or (img, y, lengths).
-      If `meta` is provided and contains 'image_id' and 'captions', it will be used.
-    - Returns dict {"BLEU-4", "METEOR", "CIDEr"}.
+    - uses BOS and EOS imported from vocab module (BOS, EOS)
     """
     enc.eval()
     dec.eval()
 
-    preds = {}     # img_id -> [pred_str]
-    refs_raw = {}  # img_id -> [ref_str, ...]
-    refs_tok = []  # list of list of tokenized refs (aligned with preds order)
-    pred_tok_list = []  # list of tokenized preds (aligned with preds order)
-    img_id_order = []
+    preds = {}
+    refs_raw = {}
+    refs_tok = {}
 
     batch_idx = 0
     for batch in loader:
-        # support different collate outputs:
-        # (imgs, ys, metas) OR (imgs, ys, lengths)
+        # Support (imgs, ys, metas) or (imgs, ys, lengths)
         if len(batch) == 3:
             imgs, ys, third = batch
         else:
-            # fallback (unexpected)
             imgs, ys = batch[0], batch[1]
             third = None
 
         imgs = imgs.to(device)
-
-        # Generate predictions (model.generate supports batch>1 now)
         V, _ = enc(imgs)
-        pred_ids = dec.generate(V, vocab.BOS, vocab.EOS, max_len=50, beam=beam)  # [B, L] or [L]
+        # Use BOS/EOS constants imported from vocab
+        pred_ids = dec.generate(V, BOS, EOS, max_len=50, beam=beam).cpu()
+
         if pred_ids.dim() == 1:
             pred_ids = pred_ids.unsqueeze(0)
 
         B = imgs.size(0)
-
-        # Process each item in batch
         for i in range(B):
-            # Prefer metadata if available
+            # Determine image id and references
             img_id = None
             references = None
 
-            if isinstance(third, list) or isinstance(third, tuple):
-                # third is list/tuple of metas (as our dataset returns)
+            if isinstance(third, (list, tuple)):
                 meta = third[i] if i < len(third) else None
                 if isinstance(meta, dict):
                     img_id = meta.get("image_id", None)
                     references = meta.get("captions", None)
-            elif isinstance(third, dict):
-                # rare case: third is a single dict mapping (unlikely), skip
-                meta = third
-                img_id = meta.get("image_id", None)
-                references = meta.get("captions", None)
-            else:
-                # no meta provided; try to recover from dataset samples if loader.dataset exists and not shuffled
+
+            if img_id is None:
+                # best-effort fallback: try loader.dataset.samples if available and not shuffled
                 try:
-                    # Compute global index only when loader has no shuffle (best-effort)
                     global_idx = batch_idx * (loader.batch_size if hasattr(loader, "batch_size") else B) + i
                     fpath_caps = loader.dataset.samples[global_idx]
                     if isinstance(fpath_caps, (list, tuple)) and len(fpath_caps) >= 3:
-                        # our dataset stores (fpath, caps, img_id)
                         _, caps_list, ds_img_id = fpath_caps
                         img_id = ds_img_id
                         references = caps_list
@@ -139,31 +123,25 @@ def evaluate_full(enc, dec, loader, vocab, device, beam=3):
                     img_id = f"{batch_idx}_{i}"
                     references = []
 
-            # fallback defaults
             if img_id is None:
                 img_id = f"{batch_idx}_{i}"
             if references is None:
                 references = []
 
-            # decode prediction
             pid = pred_ids[i].cpu().tolist()
             pred_str = vocab.decode(pid)
             preds[img_id] = [pred_str]
-            img_id_order.append(img_id)
 
-            # build refs_raw and tokenized refs
             refs_raw[img_id] = []
-            tok_refs_for_item = []
+            refs_tok[img_id] = []
             for cap in references:
                 if isinstance(cap, str) and cap.strip():
                     refs_raw[img_id].append(cap)
-                    tok_refs_for_item.append(tokenize_vi(cap))
+                    refs_tok[img_id].append(tokenize_vi(cap))
                 elif isinstance(cap, (list, tuple)) and cap:
                     cap_str = " ".join(cap)
                     refs_raw[img_id].append(cap_str)
-                    tok_refs_for_item.append(list(cap))
-            refs_tok.append(tok_refs_for_item)
-            pred_tok_list.append(tokenize_vi(pred_str))
+                    refs_tok[img_id].append(list(cap))
 
         batch_idx += 1
         if (batch_idx) % 10 == 0:
@@ -171,22 +149,16 @@ def evaluate_full(enc, dec, loader, vocab, device, beam=3):
 
     print(f"\n[Eval] Total images evaluated: {len(preds)}")
 
-    # Prepare inputs for scorers: both expect dicts image_id->list_of_captions
-    # preds and refs_raw are already in that format.
-
-    # BLEU
+    # compute metrics
     try:
         bleu4 = bleu4_score(preds, refs_raw)
     except Exception:
         bleu4 = 0.0
-
-    # METEOR (average of sentence-level best reference)
     try:
-        meteor = meteor_score_avg(pred_tok_list, refs_tok)
+        pred_tok_list = [tokenize_vi(p[0]) for p in preds.values()]
+        meteor = meteor_score_avg(pred_tok_list, list(refs_tok.values()))
     except Exception:
         meteor = 0.0
-
-    # CIDEr
     try:
         cider = cider_score(preds, refs_raw)
     except Exception:
