@@ -46,7 +46,7 @@ def show_samples(enc, dec, loader, vocab, device, n_show=3, beam=1):
     for img, y, _ in loader:
         img, y = img.to(device), y.to(device)
         V, _ = enc(img)
-        pred = dec.generate(V, BOS, EOS, max_len=30, beam=beam).cpu().tolist()
+        pred = dec.generate(V, BOS, EOS, max_len=50, beam=beam).cpu().tolist()
         for i in range(min(n_show, img.size(0))):
             gt = vocab.decode(y[i].cpu().tolist())
             pr = vocab.decode(pred[i])

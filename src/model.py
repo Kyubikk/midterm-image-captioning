@@ -2,26 +2,41 @@ import torch
 import torch.nn as nn
 
 class EncoderSmall(nn.Module):
-    def __init__(self, out_ch=128):
+    # def __init__(self, out_ch=128):
+    #     super().__init__()
+    #     self.out_ch = out_ch #
+    #     def block(cin, cout):
+    #         return nn.Sequential(
+    #             nn.Conv2d(cin, cout, 3, 1, 1),
+    #             nn.BatchNorm2d(cout),
+    #             nn.ReLU(inplace=True),
+    #             nn.Conv2d(cout, cout, 3, 1, 1),
+    #             nn.BatchNorm2d(cout),
+    #             nn.ReLU(inplace=True),
+    #             nn.MaxPool2d(2),
+    #         )
+    #     self.net = nn.Sequential(
+    #         block(3, 64),     # 224 -> 112
+    #         block(64, 128),   # 112 -> 56
+    #         block(128, 256), # 56 -> 28
+    #         block(256, 256), # 28 -> 14
+    #         nn.Conv2d(256, out_ch, 1), 
+    #     )
+    def __init__(self, out_ch=256):
         super().__init__()
-        self.out_ch = out_ch #
-        def block(cin, cout):
-            return nn.Sequential(
-                nn.Conv2d(cin, cout, 3, 1, 1),
-                nn.BatchNorm2d(cout),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(cout, cout, 3, 1, 1),
-                nn.BatchNorm2d(cout),
-                nn.ReLU(inplace=True),
-                nn.MaxPool2d(2),
-            )
-        self.net = nn.Sequential(
-            block(3, 64),     # 224 -> 112
-            block(64, 128),   # 112 -> 56
-            block(128, 256), # 56 -> 28
-            block(256, 256), # 28 -> 14
-            nn.Conv2d(256, out_ch, 1), 
-        )
+        # DÙNG RESNET50 PRETRAINED
+        resnet = models.resnet50(pretrained=True)
+        self.backbone = nn.Sequential(*list(resnet.children())[:-2]) 
+        self.proj = nn.Conv2d(2048, out_ch, kernel_size=1)  # 2048 → out_ch
+
+        # FREEZE RESNET (tùy chọn)
+        for p in self.backbone.parameters():
+            p.requires_grad = False
+
+    def forward(self, x):
+        V = self.backbone(x)      # [B, 2048, H, W]
+        V = self.proj(V)          # [B, out_ch, H, W]
+        return V, None  # (features, None)
 
     def forward(self, x):
         feat = self.net(x)  # B x C x H x W 

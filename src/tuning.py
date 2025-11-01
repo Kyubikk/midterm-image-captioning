@@ -7,10 +7,11 @@ from pathlib import Path
 Path("outputs/checkpoints").mkdir(parents=True, exist_ok=True)
 
 configs = [
-    {"name": "baseline",     "depth": 2, "out_ch": 128, "beam": 1},
-    {"name": "deep_cnn",     "depth": 3, "out_ch": 256, "beam": 1},
-    {"name": "beam_search",  "depth": 2, "out_ch": 128, "beam": 3},
-    {"name": "best_combo",   "depth": 3, "out_ch": 256, "beam": 3},
+    # {"name": "baseline",     "depth": 2, "out_ch": 128, "beam": 1},
+    # {"name": "deep_cnn",     "depth": 3, "out_ch": 256, "beam": 1},
+    # {"name": "beam_search",  "depth": 2, "out_ch": 128, "beam": 3},
+    # {"name": "best_combo",   "depth": 3, "out_ch": 256, "beam": 3},
+    {"depth": 0, "out_ch": 256, "beam": 3}
 ]
 
 results = []
