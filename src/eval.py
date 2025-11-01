@@ -1,6 +1,7 @@
 import math
 from collections import Counter
 from typing import List
+import torch
 import nltk
 from nltk.translate.meteor_score import meteor_score
 from pycocoevalcap.cider.cider import Cider
