@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
+from eval import evaluate_full
 
 from dataset import CaptionDataset, collate_fn, tokenize_vi
 from vocab import Vocab, PAD, BOS, EOS
